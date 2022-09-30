@@ -56,32 +56,32 @@ static int dispatch_external_command(struct command *pipeline)
 	 * Good luck!
 	 */
 	 
-	// Forking a child
+	/* Forking a child */
     pid_t pid = fork();
 	 
-	// initializing status
+	/* initializing status */
 	int status = 0;
   
-	// check if fork fails
+	/* check if fork failed */
     if (pid == -1) {
         fprintf(stderr, "err: Failed forking child");
         return -1;
     } else if (pid == 0) {  // child process
-		// Check if exec worked
+		/* Check if the command exists and if it doesnt exit*/
         if (execvp(pipeline->argv[0], pipeline->argv) < 0) {
 			fprintf(stderr, "err: Command not found\n");
 			exit(-1);
 		}
         exit(0);
     } else {
-        // waiting for child to terminate
+        /* waiting for child to terminate */
         wait(&status);
 
-		// Check exit status and return accordingly
+		/* Check exit status and return accordingly */
 		if (WEXITSTATUS(status) != 0)
-        	return -1;
+        	return -1;  // return if error
 		else
-        	return 0;
+        	return 0;  // return if no error
     }
 }
 
