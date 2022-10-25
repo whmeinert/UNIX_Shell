@@ -6,11 +6,117 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 
 #include "dispatcher.h"
 #include "shell_builtins.h"
 #include "parser.h"
+
+static int execArgs(struct command *pipeline);
+static int execArgsPiped(struct command *pipeline);
+static int dispatch_external_command(struct command *pipeline);
+
+
+static int execArgsPiped(struct command *pipeline)
+{	
+	int status = 0;
+	
+	while (pipeline->pipe_to != NULL){
+		int pipefd[2];
+		int child;
+
+		pipe(pipefd);
+		child = fork();
+
+		if(child < 0) {
+			perror("error: could not fork");
+			exit(-1);
+		}
+
+		if (child == 0) {
+			dup2(pipefd[1],1);
+			close(pipefd[0]);
+			status = execArgs(pipeline);
+			exit(0);
+		} else {
+			wait(&status);
+
+			dup2(pipefd[0],0);
+			close(pipefd[1]);
+			status = dispatch_external_command(pipeline->pipe_to);
+		}
+		exit(status);
+	}
+	return status;
+}
+
+
+static int execArgs(struct command *pipeline)
+{
+	/* initializing status */
+	int status = 0;
+
+	/* Forking a child */
+	pid_t pid = fork();
+
+	/* check if fork failed */
+	if (pid == -1) {
+		fprintf(stderr, "error: failed forking child\n");
+		return -1;
+	} else if (pid == 0) {  // child process
+
+		if (pipeline->input_filename != NULL) {
+			int fd0;
+			if ((fd0 = open(pipeline->input_filename, O_RDONLY)) < 0) {
+				fprintf(stderr, "error: couldn't open the input file\n");
+				exit(-1);
+			}
+			dup2(fd0, STDIN_FILENO);
+				close(fd0);
+		}
+
+		if (pipeline->output_type == COMMAND_OUTPUT_FILE_APPEND){
+			int fd1 ;
+			if ((fd1 = open(pipeline->output_filename, O_WRONLY | O_APPEND | O_CREAT, 0644)) < 0) {
+				fprintf(stderr, "error: couldn't open the output file\n");
+				exit(-1);
+			}
+
+			dup2(fd1, STDOUT_FILENO);
+			close(fd1);
+		}
+
+		if (pipeline->output_type == COMMAND_OUTPUT_FILE_TRUNCATE){
+			int fd2;
+			if ((fd2 = creat(pipeline->output_filename, 0644)) < 0) {
+				fprintf(stderr, "error: couldn't open the output file\n");
+				exit(-1);
+			}
+
+			dup2(fd2, STDOUT_FILENO);
+			close(fd2);
+		}
+
+		/* Check if the command exists and if it doesnt exit*/
+		if (execvp(pipeline->argv[0], pipeline->argv) < 0) {
+			fprintf(stderr, "error: Command not found\n");
+			exit(-1);
+		}
+		exit(0);
+	} else {
+		/* waiting for child to terminate */
+		wait(&status);
+
+		/* Check exit status and return accordingly */
+	}
+	if (WEXITSTATUS(status) != 0)
+		return -1;  // return if error
+	else
+		return 0;  // return if no error
+}
 
 /**
  * dispatch_external_command() - run a pipeline of commands
@@ -56,34 +162,25 @@ static int dispatch_external_command(struct command *pipeline)
 	 * Good luck!
 	 */
 	 
-	/* Forking a child */
-    pid_t pid = fork();
-	 
-	/* initializing status */
-	int status = 0;
-  
-	/* check if fork failed */
-    if (pid == -1) {
-        fprintf(stderr, "err: Failed forking child");
-        return -1;
-    } else if (pid == 0) {  // child process
-		/* Check if the command exists and if it doesnt exit*/
-        if (execvp(pipeline->argv[0], pipeline->argv) < 0) {
-			fprintf(stderr, "err: Command not found\n");
-			exit(-1);
-		}
-        exit(0);
-    } else {
-        /* waiting for child to terminate */
-        wait(&status);
+	int status;
+	if (pipeline->output_type != COMMAND_OUTPUT_PIPE){
+		return execArgs(pipeline);
+	}
 
-		/* Check exit status and return accordingly */
-		if (WEXITSTATUS(status) != 0)
-        	return -1;  // return if error
-		else
-        	return 0;  // return if no error
-    }
+	else {
+		pid_t child = fork();	
+		if (child==0) {
+			execArgsPiped(pipeline);
+			exit(child);
+		} else {
+			wait(&status);
+		}
+		return WEXITSTATUS(status);
+	}
 }
+
+
+
 
 /**
  * dispatch_parsed_command() - run a command after it has been parsed
